@@ -199,6 +199,24 @@ def run_r6():
     print(f"  Conflicts:        {len(result['conflicts'])}")
 
 
+def run_x1(sender: str | None = None):
+    """X1 (Tier A): List unread by sender."""
+    import extras
+    extras.run_x1(sender=sender, cap="X1")
+
+
+def run_x2(thread_id: str | None = None):
+    """X2 (Tier B): Thread summary — summarise a long thread."""
+    import extras
+    extras.run_x2(thread_id=thread_id, cap="X2")
+
+
+def run_x3():
+    """X3 (Tier B): Follow-up tracking — unanswered sent messages."""
+    import extras
+    extras.run_x3(cap="X3")
+
+
 def main():
     parser = argparse.ArgumentParser(description="InboxHero — agentic inbox management")
     parser.add_argument("--cap", type=str, help="Run one capability (R1–R6, X1–X3)")
@@ -207,6 +225,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Dry-run mode: show what would happen without sending")
     parser.add_argument("--store", action="store_true", help="R4: Store preferences from inbox to prefs.json")
     parser.add_argument("--recall", action="store_true", help="R4: Recall stored preferences and apply them (fresh process)")
+    parser.add_argument("--sender", type=str, default=None, help="X1: Filter by sender email")
+    parser.add_argument("--thread", type=str, default=None, help="X2: Thread id to summarise")
     args = parser.parse_args()
 
     if args.all:
@@ -223,6 +243,12 @@ def main():
         run_r5()
         print()
         run_r6()
+        print()
+        run_x1()
+        print()
+        run_x2()
+        print()
+        run_x3()
         return
 
     if not args.cap:
@@ -245,6 +271,12 @@ def main():
         run_r5()
     elif cap == "R6":
         run_r6()
+    elif cap == "X1":
+        run_x1(args.sender)
+    elif cap == "X2":
+        run_x2(args.thread)
+    elif cap == "X3":
+        run_x3()
     else:
         print(f"Unknown capability: {cap}")
         sys.exit(1)

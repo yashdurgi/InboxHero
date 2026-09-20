@@ -1,0 +1,13 @@
+{
+  "no_meetings_before_11": {
+    "rule": "No meetings before 11:00am. If anyone proposes earlier, offer 11:00am or later.",
+    "earliest": "11:00",
+    "source_msg": "m070"
+  },
+  "cc_co-founder_on_legal": {
+    "rule": "Always CC gwynne@spacey.com on legal mail from Sterling & Vance LLP",
+    "cc": "gwynne@spacey.com",
+    "trigger_domain": "sterlingvance.com",
+    "source_msg": "m071"
+  }
+}

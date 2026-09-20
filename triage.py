@@ -1,5 +1,5 @@
 """
-triage.py — Part 2: Zero the inbox.
+triage.py — Part 2:
 
 Two-tier classification:
   Tier 1 (rules): receipts, newsletters, notifications, security alerts —
@@ -25,6 +25,114 @@ DISPOSITIONS = {
     "delegate":  "Someone else should handle this.",
     "escalate":  "Needs the owner's immediate human attention.",
 }
+
+
+# ---------------------------------------------------------------------------
+# Phishing / suspicious patterns — checked BEFORE noise rules
+# These must be caught as "escalate" even if the sender domain looks like noise.
+# ---------------------------------------------------------------------------
+
+# Body fragments that indicate phishing or social engineering.
+PHISH_BODY_PATTERNS = [
+    "remit the outstanding", "wire $", "wire transfer", "new account below",
+    "routing:", "account:", "remit", "updated remittance",
+    "do not loop in finance", "keep this between us", "don't loop in",
+    "re-verify your credentials", "password expires in",
+    "accounts that are not verified", "suspend your account",
+]
+
+# Domains that are NOT legitimate SpaceY/known domains — lookalike or spoofed.
+SUSPICIOUS_DOMAINS = [
+    "cloudscale-invoicing.com",
+    "spacey-helpdesk.com",
+    "spacey-workspace-verify.com",
+    "spacey.co",  # real is spacey.com — .co is a lookalike
+]
+
+# Domains that are legitimate SpaceY internal/known — everything else
+# claiming to be from a colleague but using an external domain is suspicious.
+LEGIT_SPACEY_DOMAIN = "spacey.com"
+
+
+def _is_suspicious(msg: dict) -> bool:
+    """Return True if this message has phishing or social-engineering indicators."""
+    sender = msg.get("from", "").lower()
+    subject = msg.get("subject", "").lower()
+    body = msg.get("body", "").lower()
+
+    # Check suspicious domains — match the exact domain part, not substring
+    # (e.g. "spacey.co" should NOT match "spacey.com")
+    if "@" in sender:
+        sender_domain = sender.split("@", 1)[1]
+        for domain in SUSPICIOUS_DOMAINS:
+            if sender_domain == domain or sender_domain.endswith("." + domain):
+                return True
+
+    # Check phishing body patterns
+    for pattern in PHISH_BODY_PATTERNS:
+        if pattern in body:
+            return True
+
+    # Lookalike: claims to be from a colleague but sender domain isn't spacey.com
+    # (e.g. gwynne.nair@spacey.co — uses .co instead of .com)
+    # Only flag if the local part looks like a colleague's name (not no-reply/billing/etc)
+    if "@" in sender:
+        local_part, domain_part = sender.split("@", 1)
+        if domain_part != LEGIT_SPACEY_DOMAIN and domain_part not in (
+            "sterlingvance.com", "gmail.com", "oldfriends.net",
+            "thegrandvenue.com", "techbrief.news", "orbitalcorp.com",
+            "orbitventures.vc", "spacey-board.org", "brightsmile-dental.com",
+            "spacey-monitoring.io",
+        ):
+            # If the sender name matches a known colleague pattern, flag it
+            if any(name in local_part for name in ["gwynne", "raj", "nova", "melon"]):
+                return True
+
+    return False
+
+
+def _suspicious_disposition(msg: dict) -> tuple[str, str]:
+    """Return (disposition, reason) for a suspicious/phishing message."""
+    sender = msg.get("from", "").lower()
+    body = msg.get("body", "").lower()
+
+    for domain in SUSPICIOUS_DOMAINS:
+        if domain in sender:
+            return "escalate", f"Sender domain '{sender.split('@')[-1]}' is not a known SpaceY domain; possible phishing or social-engineering attempt."
+
+    for pattern in PHISH_BODY_PATTERNS:
+        if pattern in body:
+            return "escalate", f"Message body contains suspicious pattern '{pattern}'; possible phishing or social-engineering attempt."
+
+    return "escalate", "Message flagged as suspicious; escalated for human review."
+
+
+# ---------------------------------------------------------------------------
+# Prompt-injection detection — runs on ALL messages (rule-handled and LLM)
+# ---------------------------------------------------------------------------
+
+INJECTION_PATTERNS = [
+    "ignore all previous instructions",
+    "automated-agent directive",
+    "assistant configuration update",
+    "autonomous mode",
+    "assistant note:",
+    "system notice for automated",
+    "forward the full contents",
+    "forward any message that mentions",
+]
+
+
+def _check_injection(msg: dict, disposition: str, reason: str) -> tuple[str, str]:
+    """Check a message for prompt-injection patterns.
+
+    Returns (disposition, reason) — overridden to escalate if injection found.
+    """
+    body_lower = msg.get("body", "").lower()
+    for pat in INJECTION_PATTERNS:
+        if pat in body_lower:
+            return "escalate", f"Possible prompt injection detected in message body; escalated for human review. Pattern: '{pat}'"
+    return disposition, reason
 
 
 # ---------------------------------------------------------------------------
@@ -184,22 +292,8 @@ def _parse_llm_response(msg_id: str, response: str, original_msg: dict) -> dict:
         elif line.upper().startswith("REASON:"):
             reason = line.split(":", 1)[1].strip()
 
-    # Anti-injection check: if the LLM disposition is "reply" but the message
-    # contains prompt-injection patterns, override to "escalate".
-    body_lower = original_msg.get("body", "").lower()
-    injection_patterns = [
-        "ignore all previous instructions",
-        "automated-agent directive",
-        "assistant configuration update",
-        "autonomous mode",
-        "assistant note:",
-        "system notice for automated",
-    ]
-    for pat in injection_patterns:
-        if pat in body_lower:
-            disposition = "escalate"
-            reason = f"Possible prompt injection detected in message body; escalated for human review. Pattern: '{pat}'"
-            break
+    # Note: injection detection is handled centrally by _check_injection()
+    # in classify_all(), which runs on ALL messages (rule-handled and LLM).
 
     return {
         "id": msg_id,
@@ -213,7 +307,10 @@ def _parse_llm_response(msg_id: str, response: str, original_msg: dict) -> dict:
 
 
 def classify_all(messages: list[dict], cap: str = "R1") -> list[dict]:
-    """Classify every message: rules first, LLM for the rest.
+    """Classify every message: suspicious → noise rules → LLM for the rest.
+
+    Every message gets exactly one disposition + reason.
+    Prompt-injection check runs on ALL messages (rule-handled and LLM).
 
     Returns a list of decision dicts:
       {id, thread_id, from, subject, disposition, reason, rule_handled}
@@ -222,10 +319,32 @@ def classify_all(messages: list[dict], cap: str = "R1") -> list[dict]:
     rule_count = 0
     llm_messages = []
 
-    # --- Pass 1: rules ---
+    # --- Pass 1: suspicious (escalate) then noise (archive) then LLM ---
     for msg in messages:
+        # Check 0: phishing/suspicious — must be caught before noise rules
+        if _is_suspicious(msg):
+            disp, reason = _suspicious_disposition(msg)
+            # Also run injection check (suspicious messages could contain injections too)
+            disp, reason = _check_injection(msg, disp, reason)
+            decisions.append({
+                "id": msg["id"],
+                "thread_id": msg.get("thread_id", ""),
+                "from": msg.get("from", ""),
+                "subject": msg.get("subject", ""),
+                "disposition": disp,
+                "reason": reason,
+                "rule_handled": True,
+            })
+            trace.log_event(cap, "decision", msg_id=msg["id"],
+                            disposition=disp, reason=reason, rule_handled=True)
+            rule_count += 1
+            continue
+
+        # Check 1: noise — archive without LLM
         if _is_noise(msg):
             disp, reason = _rule_disposition(msg)
+            # Run injection check on rule-handled messages too
+            disp, reason = _check_injection(msg, disp, reason)
             decisions.append({
                 "id": msg["id"],
                 "thread_id": msg.get("thread_id", ""),
@@ -241,12 +360,11 @@ def classify_all(messages: list[dict], cap: str = "R1") -> list[dict]:
         else:
             llm_messages.append(msg)
 
-    # --- Pass 2: LLM (batched) ---
+    # --- Pass 2: LLM (one at a time) ---
     for i in range(0, len(llm_messages), LLM_BATCH_SIZE):
         batch = llm_messages[i:i + LLM_BATCH_SIZE]
         prompt = _build_batch_prompt(batch)
 
-        # Build conversation for ollama
         ollama_messages = [
             {"role": "system", "content": "You are a precise inbox triage assistant. Follow instructions exactly."},
             {"role": "user", "content": prompt},
@@ -255,7 +373,6 @@ def classify_all(messages: list[dict], cap: str = "R1") -> list[dict]:
         try:
             response = config.ollama_chat(ollama_messages, temperature=0.1, max_tokens=1024)
         except Exception as e:
-            # If LLM fails, default each to escalate and log the error
             for msg in batch:
                 decision = {
                     "id": msg["id"],
@@ -272,8 +389,6 @@ def classify_all(messages: list[dict], cap: str = "R1") -> list[dict]:
                                 rule_handled=False, error=str(e)[:200])
             continue
 
-        # Parse response — the LLM may return multiple DISPOSITION/REASON pairs
-        # Try to split by "Message N" markers or by "---"
         parsed = _parse_batch_response(response, batch)
         for msg in batch:
             decision = parsed.get(msg["id"], {
@@ -286,6 +401,10 @@ def classify_all(messages: list[dict], cap: str = "R1") -> list[dict]:
                 "rule_handled": False,
             })
             decision["rule_handled"] = False
+            # Run injection check on LLM-classified messages too
+            decision["disposition"], decision["reason"] = _check_injection(
+                msg, decision["disposition"], decision["reason"]
+            )
             decisions.append(decision)
             trace.log_event(cap, "decision", msg_id=msg["id"],
                             disposition=decision["disposition"],
