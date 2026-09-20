@@ -1,0 +1,25 @@
+{
+  "student": "[Your Name], cert-aai-2026-06-0006",
+  "repo": "https://github.com/yashw/inboxhero",
+  "system": {
+    "framework": "none",
+    "model": "",
+    "messages_processed": 100,
+    "assumptions": [
+      "Flat JSON array — no folder hierarchy; all 100 messages are top-level elements.",
+      "Owner email is melon@spacey.com; messages where to=melon@spacey.com are incoming. Two messages (m058, m085) are outgoing (from=melon@spacey.com). Two self-sent (m070, m099) where from==to==melon@spacey.com.",
+      "Timestamps are ISO 8601 without timezone (YYYY-MM-DDTHH:MM:SS); assumed to be owner's local timezone. No conversion performed.",
+      "Thread membership is by thread_id field only — no Message-ID, In-Reply-To, or References headers. Three threads have >1 message: t-infra (4), t-invest (2), t-launch (9).",
+      "unread is a status flag, not a processing gate; all 100 messages are processed for disposition regardless of read state.",
+      "Sender identity is the from field alone; no DKIM/SPF verification. Phishing messages spoof or mimic known correspondents (e.g. gwynne.nair@spacey.co vs real gwynne@spacey.com)."
+    ],
+    "rule_handled": 0,
+    "dispositions": [],
+    "retrieval": "",
+    "irreversible": [],
+    "reversible": [],
+    "gate": "",
+    "preference_demo": ""
+  },
+  "capabilities": []
+}
