@@ -188,9 +188,15 @@ def run_r5():
 
 def run_r6():
     """R6: Dashboard — three-pane view from a run."""
-    print("=== R6: Dashboard ===")
-    # Stub — Part 7
-    print("(not yet implemented)")
+    import dashboard
+
+    result = dashboard.run_dashboard(cap="R6")
+
+    print(f"\n=== R6 Summary ===")
+    print(f"  Pending actions:  {len(result['pending_actions'])}")
+    print(f"  Flagged:          {len(result['flagged'])}")
+    print(f"  Commitments:      {len(result['commitments'])}")
+    print(f"  Conflicts:        {len(result['conflicts'])}")
 
 
 def main():
