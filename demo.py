@@ -172,10 +172,18 @@ def run_r4(mode: str = "store"):
 
 
 def run_r5():
-    """R5: Refuse embedded instructions — detect and refuse prompt injections."""
-    print("=== R5: Refuse embedded instructions ===")
-    # Stub — Part 6
-    print("(not yet implemented)")
+    """R5: Refuse embedded instructions — detect, refuse, flag, report injections."""
+    import hostile
+
+    result = hostile.run_scan(cap="R5")
+
+    print(f"\n=== R5 Summary ===")
+    print(f"  Total scanned:    {result['total_scanned']}")
+    print(f"  Hostile found:    {result['hostile_count']}")
+    print(f"  By type:          {result['by_type']}")
+    print(f"  Hostile IDs:      {result['hostile_ids']}")
+    print(f"  outbox/ writes:   {result['outbox_writes']}")
+    print(f"  Messages deleted: {result['messages_deleted']}")
 
 
 def run_r6():
